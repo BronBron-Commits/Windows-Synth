@@ -8,6 +8,8 @@
 ========================= */
 #define SAMPLE_RATE 44100
 #define MAX_VOICES  8
+#define STEPS       8
+#define BPM         120
 
 /* =========================
    VOICE TYPES
@@ -36,6 +38,12 @@ typedef struct {
 static Voice voices[MAX_VOICES];
 static int running = 1;
 
+/* sequencer */
+static int seq_steps[STEPS] = {0};
+static int seq_pos = 0;
+static int seq_running = 0;
+static Uint32 last_tick = 0;
+
 /* =========================
    WAVEFORMS
 ========================= */
@@ -50,7 +58,7 @@ static float noise(void)
 }
 
 /* =========================
-   TRIGGER FUNCTIONS
+   TRIGGERS
 ========================= */
 static void trigger_square(float base_freq)
 {
@@ -72,9 +80,6 @@ static void trigger_noise(void)
 {
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!voices[i].active) {
-            voices[i].phase = 0.0f;
-            voices[i].pitch = 1.0f;
-            voices[i].pitch_decay = 1.0f;
             voices[i].amp = 1.0f;
             voices[i].amp_decay = 0.80f;
             voices[i].type = VOICE_NOISE;
@@ -117,7 +122,6 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
                 voice->active = 0;
         }
 
-        /* soft clamp */
         if (mix > 1.0f) mix = 1.0f;
         if (mix < -1.0f) mix = -1.0f;
 
@@ -136,10 +140,10 @@ int main(int argc, char **argv)
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Windows Synth - SNES Pluck + Noise",
+        "Windows Synth - Step Sequencer",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        480,
+        520,
         240,
         SDL_WINDOW_SHOWN
     );
@@ -159,37 +163,48 @@ int main(int argc, char **argv)
 
     SDL_PauseAudioDevice(dev, 0);
 
+    Uint32 step_ms = (60000 / BPM) / 2;
+
     SDL_Event e;
     while (running) {
+        Uint32 now = SDL_GetTicks();
+
+        if (seq_running && now - last_tick >= step_ms) {
+            last_tick = now;
+
+            if (seq_steps[seq_pos])
+                trigger_square(440.0f);
+
+            seq_pos = (seq_pos + 1) % STEPS;
+        }
+
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = 0;
 
             if (e.type == SDL_KEYDOWN) {
-                switch (e.key.keysym.sym) {
-                    case SDLK_ESCAPE:
-                        running = 0;
-                        break;
+                SDL_Keycode k = e.key.keysym.sym;
 
-                    case SDLK_z:
-                        trigger_square(220.0f);
-                        break;
-                    case SDLK_x:
-                        trigger_square(330.0f);
-                        break;
-                    case SDLK_c:
-                        trigger_square(440.0f);
-                        break;
-                    case SDLK_v:
-                        trigger_square(660.0f);
-                        break;
+                if (k == SDLK_ESCAPE)
+                    running = 0;
 
-                    case SDLK_b:
-                        trigger_noise();
-                        break;
+                if (k == SDLK_SPACE) {
+                    seq_running = !seq_running;
+                    printf("Sequencer %s\n", seq_running ? "ON" : "OFF");
                 }
+
+                if (k >= SDLK_1 && k <= SDLK_8) {
+                    int idx = k - SDLK_1;
+                    seq_steps[idx] = !seq_steps[idx];
+                    printf("Step %d: %s\n", idx + 1,
+                           seq_steps[idx] ? "ON" : "OFF");
+                }
+
+                if (k == SDLK_b)
+                    trigger_noise();
             }
         }
+
         SDL_Delay(1);
     }
 
