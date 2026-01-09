@@ -2,12 +2,55 @@
 #include <math.h>
 #include <stdio.h>
 
+/* =========================
+   CONFIG
+========================= */
 #define SAMPLE_RATE 44100
-#define TONE_FREQ   440.0f
+#define MAX_VOICES  8
 
-static float phase = 0.0f;
+/* =========================
+   VOICE STRUCT
+========================= */
+typedef struct {
+    float phase;
+    float pitch;
+    float pitch_decay;
+    float amp;
+    float amp_decay;
+    int active;
+} Voice;
+
+/* =========================
+   GLOBAL STATE
+========================= */
+static Voice voices[MAX_VOICES];
 static int running = 1;
-static int sound_on = 0;   /* toggled by SPACE */
+
+/* =========================
+   WAVEFORM
+========================= */
+static float square(float phase)
+{
+    return (fmodf(phase, 1.0f) < 0.25f) ? 1.0f : -1.0f;
+}
+
+/* =========================
+   TRIGGER VOICE
+========================= */
+static void trigger_voice(float base_freq)
+{
+    for (int i = 0; i < MAX_VOICES; i++) {
+        if (!voices[i].active) {
+            voices[i].phase = 0.0f;
+            voices[i].pitch = base_freq * 8.0f;   /* big pitch snap */
+            voices[i].pitch_decay = 0.92f;
+            voices[i].amp = 1.0f;
+            voices[i].amp_decay = 0.88f;
+            voices[i].active = 1;
+            break;
+        }
+    }
+}
 
 /* =========================
    AUDIO CALLBACK
@@ -18,17 +61,29 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
     int samples = len / sizeof(int16_t);
 
     for (int i = 0; i < samples; i++) {
-        float sample = 0.0f;
+        float mix = 0.0f;
 
-        if (sound_on) {
-            sample = sinf(phase) * 0.4f;
+        for (int v = 0; v < MAX_VOICES; v++) {
+            Voice *voice = &voices[v];
+            if (!voice->active)
+                continue;
 
-            phase += 2.0f * 3.1415926535f * TONE_FREQ / SAMPLE_RATE;
-            if (phase >= 2.0f * 3.1415926535f)
-                phase -= 2.0f * 3.1415926535f;
+            float s = square(voice->phase);
+            mix += s * voice->amp;
+
+            voice->phase += voice->pitch / SAMPLE_RATE;
+            voice->pitch *= voice->pitch_decay;
+            voice->amp *= voice->amp_decay;
+
+            if (voice->amp < 0.001f)
+                voice->active = 0;
         }
 
-        out[i] = (int16_t)(sample * 32767);
+        /* soft limit */
+        if (mix > 1.0f) mix = 1.0f;
+        if (mix < -1.0f) mix = -1.0f;
+
+        out[i] = (int16_t)(mix * 32767);
     }
 }
 
@@ -43,19 +98,13 @@ int main(int argc, char **argv)
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Windows Synth - SPACE = Toggle Sound",
+        "Windows Synth - SNES Voice Test",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        400,
-        200,
+        480,
+        240,
         SDL_WINDOW_SHOWN
     );
-
-    if (!window) {
-        printf("Window creation failed: %s\n", SDL_GetError());
-        SDL_Quit();
-        return 1;
-    }
 
     SDL_AudioSpec want = {0};
     want.freq = SAMPLE_RATE;
@@ -67,8 +116,6 @@ int main(int argc, char **argv)
     SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
     if (!dev) {
         printf("Audio device failed: %s\n", SDL_GetError());
-        SDL_DestroyWindow(window);
-        SDL_Quit();
         return 1;
     }
 
@@ -81,16 +128,30 @@ int main(int argc, char **argv)
                 running = 0;
 
             if (e.type == SDL_KEYDOWN) {
-                if (e.key.keysym.sym == SDLK_ESCAPE)
-                    running = 0;
+                switch (e.key.keysym.sym) {
+                    case SDLK_ESCAPE:
+                        running = 0;
+                        break;
 
-                if (e.key.keysym.sym == SDLK_SPACE) {
-                    sound_on = !sound_on;
-                    printf("Sound %s\n", sound_on ? "ON" : "OFF");
+                    case SDLK_z:
+                        trigger_voice(220.0f);
+                        break;
+
+                    case SDLK_x:
+                        trigger_voice(330.0f);
+                        break;
+
+                    case SDLK_c:
+                        trigger_voice(440.0f);
+                        break;
+
+                    case SDLK_v:
+                        trigger_voice(660.0f);
+                        break;
                 }
             }
         }
-        SDL_Delay(16);
+        SDL_Delay(1);
     }
 
     SDL_CloseAudioDevice(dev);
