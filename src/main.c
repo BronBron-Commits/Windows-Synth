@@ -1,12 +1,21 @@
 #include <SDL.h>
 #include <math.h>
 #include <stdio.h>
+#include <stdlib.h>
 
 /* =========================
    CONFIG
 ========================= */
 #define SAMPLE_RATE 44100
 #define MAX_VOICES  8
+
+/* =========================
+   VOICE TYPES
+========================= */
+typedef enum {
+    VOICE_SQUARE,
+    VOICE_NOISE
+} VoiceType;
 
 /* =========================
    VOICE STRUCT
@@ -17,6 +26,7 @@ typedef struct {
     float pitch_decay;
     float amp;
     float amp_decay;
+    VoiceType type;
     int active;
 } Voice;
 
@@ -27,25 +37,47 @@ static Voice voices[MAX_VOICES];
 static int running = 1;
 
 /* =========================
-   WAVEFORM
+   WAVEFORMS
 ========================= */
 static float square(float phase)
 {
     return (fmodf(phase, 1.0f) < 0.25f) ? 1.0f : -1.0f;
 }
 
+static float noise(void)
+{
+    return ((rand() & 0x7FFF) / 16384.0f) - 1.0f;
+}
+
 /* =========================
-   TRIGGER VOICE
+   TRIGGER FUNCTIONS
 ========================= */
-static void trigger_voice(float base_freq)
+static void trigger_square(float base_freq)
 {
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!voices[i].active) {
             voices[i].phase = 0.0f;
-            voices[i].pitch = base_freq * 8.0f;   /* big pitch snap */
+            voices[i].pitch = base_freq * 8.0f;
             voices[i].pitch_decay = 0.92f;
             voices[i].amp = 1.0f;
             voices[i].amp_decay = 0.88f;
+            voices[i].type = VOICE_SQUARE;
+            voices[i].active = 1;
+            break;
+        }
+    }
+}
+
+static void trigger_noise(void)
+{
+    for (int i = 0; i < MAX_VOICES; i++) {
+        if (!voices[i].active) {
+            voices[i].phase = 0.0f;
+            voices[i].pitch = 1.0f;
+            voices[i].pitch_decay = 1.0f;
+            voices[i].amp = 1.0f;
+            voices[i].amp_decay = 0.80f;
+            voices[i].type = VOICE_NOISE;
             voices[i].active = 1;
             break;
         }
@@ -68,18 +100,24 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
             if (!voice->active)
                 continue;
 
-            float s = square(voice->phase);
-            mix += s * voice->amp;
+            float s = 0.0f;
 
-            voice->phase += voice->pitch / SAMPLE_RATE;
-            voice->pitch *= voice->pitch_decay;
+            if (voice->type == VOICE_SQUARE) {
+                s = square(voice->phase);
+                voice->phase += voice->pitch / SAMPLE_RATE;
+                voice->pitch *= voice->pitch_decay;
+            } else {
+                s = noise();
+            }
+
+            mix += s * voice->amp;
             voice->amp *= voice->amp_decay;
 
             if (voice->amp < 0.001f)
                 voice->active = 0;
         }
 
-        /* soft limit */
+        /* soft clamp */
         if (mix > 1.0f) mix = 1.0f;
         if (mix < -1.0f) mix = -1.0f;
 
@@ -98,7 +136,7 @@ int main(int argc, char **argv)
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Windows Synth - SNES Voice Test",
+        "Windows Synth - SNES Pluck + Noise",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         480,
@@ -134,19 +172,20 @@ int main(int argc, char **argv)
                         break;
 
                     case SDLK_z:
-                        trigger_voice(220.0f);
+                        trigger_square(220.0f);
                         break;
-
                     case SDLK_x:
-                        trigger_voice(330.0f);
+                        trigger_square(330.0f);
                         break;
-
                     case SDLK_c:
-                        trigger_voice(440.0f);
+                        trigger_square(440.0f);
+                        break;
+                    case SDLK_v:
+                        trigger_square(660.0f);
                         break;
 
-                    case SDLK_v:
-                        trigger_voice(660.0f);
+                    case SDLK_b:
+                        trigger_noise();
                         break;
                 }
             }
