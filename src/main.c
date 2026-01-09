@@ -11,11 +11,14 @@
 #define STEPS       8
 #define BPM         120
 
+#define WINDOW_W 640
+#define WINDOW_H 240
+
 /* =========================
    VOICE TYPES
 ========================= */
 typedef enum {
-    VOICE_SQUARE,
+    VOICE_PLUCK,
     VOICE_NOISE
 } VoiceType;
 
@@ -58,18 +61,27 @@ static float noise(void)
 }
 
 /* =========================
+   BITCRUSH
+========================= */
+static float bitcrush(float s)
+{
+    int v = (int)(s * 127.0f);
+    return v / 127.0f;
+}
+
+/* =========================
    TRIGGERS
 ========================= */
-static void trigger_square(float base_freq)
+static void trigger_pluck(float base_freq)
 {
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!voices[i].active) {
             voices[i].phase = 0.0f;
-            voices[i].pitch = base_freq * 8.0f;
-            voices[i].pitch_decay = 0.92f;
+            voices[i].pitch = base_freq * 10.0f; /* stronger snap */
+            voices[i].pitch_decay = 0.90f;
             voices[i].amp = 1.0f;
-            voices[i].amp_decay = 0.88f;
-            voices[i].type = VOICE_SQUARE;
+            voices[i].amp_decay = 0.85f;
+            voices[i].type = VOICE_PLUCK;
             voices[i].active = 1;
             break;
         }
@@ -81,7 +93,7 @@ static void trigger_noise(void)
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!voices[i].active) {
             voices[i].amp = 1.0f;
-            voices[i].amp_decay = 0.80f;
+            voices[i].amp_decay = 0.78f;
             voices[i].type = VOICE_NOISE;
             voices[i].active = 1;
             break;
@@ -107,11 +119,19 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
 
             float s = 0.0f;
 
-            if (voice->type == VOICE_SQUARE) {
-                s = square(voice->phase);
+            if (voice->type == VOICE_PLUCK) {
+                /* square body */
+                float body = square(voice->phase);
+
+                /* noise scrape layer */
+                float scrape = noise() * 0.25f;
+
+                s = body + scrape;
+
                 voice->phase += voice->pitch / SAMPLE_RATE;
                 voice->pitch *= voice->pitch_decay;
-            } else {
+            }
+            else {
                 s = noise();
             }
 
@@ -122,10 +142,49 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
                 voice->active = 0;
         }
 
+        /* bitcrush + clamp */
+        mix = bitcrush(mix);
+
         if (mix > 1.0f) mix = 1.0f;
         if (mix < -1.0f) mix = -1.0f;
 
         out[i] = (int16_t)(mix * 32767);
+    }
+}
+
+/* =========================
+   DRAW GRID
+========================= */
+static void draw_grid(SDL_Renderer *r)
+{
+    int margin = 40;
+    int cell_w = (WINDOW_W - margin * 2) / STEPS;
+    int cell_h = 60;
+    int y = WINDOW_H / 2 - cell_h / 2;
+
+    for (int i = 0; i < STEPS; i++) {
+        SDL_Rect rect = {
+            margin + i * cell_w,
+            y,
+            cell_w - 4,
+            cell_h
+        };
+
+        SDL_SetRenderDrawColor(r, 30, 30, 30, 255);
+        SDL_RenderFillRect(r, &rect);
+
+        if (seq_steps[i]) {
+            SDL_SetRenderDrawColor(r, 0, 180, 120, 255);
+            SDL_RenderFillRect(r, &rect);
+        }
+
+        if (i == seq_pos && seq_running) {
+            SDL_SetRenderDrawColor(r, 255, 210, 0, 255);
+            SDL_RenderFillRect(r, &rect);
+        }
+
+        SDL_SetRenderDrawColor(r, 200, 200, 200, 255);
+        SDL_RenderDrawRect(r, &rect);
     }
 }
 
@@ -140,13 +199,16 @@ int main(int argc, char **argv)
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Windows Synth - Step Sequencer",
+        "Windows Synth - ALTTP Style",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        520,
-        240,
+        WINDOW_W,
+        WINDOW_H,
         SDL_WINDOW_SHOWN
     );
+
+    SDL_Renderer *renderer =
+        SDL_CreateRenderer(window, -1, SDL_RENDERER_ACCELERATED);
 
     SDL_AudioSpec want = {0};
     want.freq = SAMPLE_RATE;
@@ -155,7 +217,9 @@ int main(int argc, char **argv)
     want.samples = 512;
     want.callback = audio_cb;
 
-    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+    SDL_AudioDeviceID dev =
+        SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
+
     if (!dev) {
         printf("Audio device failed: %s\n", SDL_GetError());
         return 1;
@@ -173,7 +237,7 @@ int main(int argc, char **argv)
             last_tick = now;
 
             if (seq_steps[seq_pos])
-                trigger_square(440.0f);
+                trigger_pluck(440.0f);
 
             seq_pos = (seq_pos + 1) % STEPS;
         }
@@ -188,16 +252,12 @@ int main(int argc, char **argv)
                 if (k == SDLK_ESCAPE)
                     running = 0;
 
-                if (k == SDLK_SPACE) {
+                if (k == SDLK_SPACE)
                     seq_running = !seq_running;
-                    printf("Sequencer %s\n", seq_running ? "ON" : "OFF");
-                }
 
                 if (k >= SDLK_1 && k <= SDLK_8) {
                     int idx = k - SDLK_1;
                     seq_steps[idx] = !seq_steps[idx];
-                    printf("Step %d: %s\n", idx + 1,
-                           seq_steps[idx] ? "ON" : "OFF");
                 }
 
                 if (k == SDLK_b)
@@ -205,10 +265,15 @@ int main(int argc, char **argv)
             }
         }
 
-        SDL_Delay(1);
+        SDL_SetRenderDrawColor(renderer, 10, 10, 10, 255);
+        SDL_RenderClear(renderer);
+        draw_grid(renderer);
+        SDL_RenderPresent(renderer);
+        SDL_Delay(16);
     }
 
     SDL_CloseAudioDevice(dev);
+    SDL_DestroyRenderer(renderer);
     SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
