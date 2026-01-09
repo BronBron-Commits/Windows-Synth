@@ -1,40 +1,54 @@
 #include <SDL.h>
+#include <math.h>
 #include <stdio.h>
-#include "synth.h"
 
-static Synth synth;
+#define SAMPLE_RATE 44100
+#define TONE_FREQ   440.0f
 
-static float bitcrush(float s) {
-    int v = (int)(s * 127);
-    return v / 127.0f;
-}
+static float phase = 0.0f;
+static int running = 1;
 
-void audio_cb(void *ud, Uint8 *stream, int len) {
-    int16_t *out = (int16_t*)stream;
-    int samples = len / 2;
+/* =========================
+   AUDIO CALLBACK
+========================= */
+void audio_cb(void *userdata, Uint8 *stream, int len)
+{
+    int16_t *out = (int16_t *)stream;
+    int samples = len / sizeof(int16_t);
 
     for (int i = 0; i < samples; i++) {
-        float v = bitcrush(synth_sample(&synth));
-        out[i] = (int16_t)(v * 32767);
+        float sample = sinf(phase) * 0.4f;
+
+        phase += 2.0f * 3.1415926535f * TONE_FREQ / SAMPLE_RATE;
+        if (phase >= 2.0f * 3.1415926535f)
+            phase -= 2.0f * 3.1415926535f;
+
+        out[i] = (int16_t)(sample * 32767);
     }
 }
 
-int main(int argc, char **argv) {
+/* =========================
+   MAIN
+========================= */
+int main(int argc, char **argv)
+{
     if (SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO) < 0) {
         printf("SDL_Init failed: %s\n", SDL_GetError());
         return 1;
     }
 
-    SDL_Window *win = SDL_CreateWindow(
-        "SNES-Style Synth",
+    SDL_Window *window = SDL_CreateWindow(
+        "Windows Synth Audio Test",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
-        480, 240,
+        400,
+        200,
         SDL_WINDOW_SHOWN
     );
 
-    if (!win) {
-        printf("Window failed: %s\n", SDL_GetError());
+    if (!window) {
+        printf("Window creation failed: %s\n", SDL_GetError());
+        SDL_Quit();
         return 1;
     }
 
@@ -45,40 +59,32 @@ int main(int argc, char **argv) {
     want.samples = 512;
     want.callback = audio_cb;
 
-    SDL_AudioDeviceID dev =
-        SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
-
+    SDL_AudioDeviceID dev = SDL_OpenAudioDevice(NULL, 0, &want, NULL, 0);
     if (!dev) {
-        printf("Audio failed: %s\n", SDL_GetError());
+        printf("Audio device failed: %s\n", SDL_GetError());
+        SDL_DestroyWindow(window);
+        SDL_Quit();
         return 1;
     }
 
     SDL_PauseAudioDevice(dev, 0);
 
-    synth_init(&synth);
-
-    int running = 1;
     SDL_Event e;
-
     while (running) {
         while (SDL_PollEvent(&e)) {
             if (e.type == SDL_QUIT)
                 running = 0;
 
             if (e.type == SDL_KEYDOWN) {
-                switch (e.key.keysym.sym) {
-                    case SDLK_z: synth_trigger(&synth, 220, 0); break;
-                    case SDLK_x: synth_trigger(&synth, 330, 0); break;
-                    case SDLK_c: synth_trigger(&synth, 440, 1); break;
-                    case SDLK_v: synth_trigger(&synth, 660, 2); break;
-                    case SDLK_ESCAPE: running = 0; break;
-                }
+                if (e.key.keysym.sym == SDLK_ESCAPE)
+                    running = 0;
             }
         }
-        SDL_Delay(1);
+        SDL_Delay(16);
     }
 
     SDL_CloseAudioDevice(dev);
+    SDL_DestroyWindow(window);
     SDL_Quit();
     return 0;
 }
