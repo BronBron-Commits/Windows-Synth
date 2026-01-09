@@ -7,6 +7,7 @@
 
 static float phase = 0.0f;
 static int running = 1;
+static int sound_on = 0;   /* toggled by SPACE */
 
 /* =========================
    AUDIO CALLBACK
@@ -17,11 +18,15 @@ void audio_cb(void *userdata, Uint8 *stream, int len)
     int samples = len / sizeof(int16_t);
 
     for (int i = 0; i < samples; i++) {
-        float sample = sinf(phase) * 0.4f;
+        float sample = 0.0f;
 
-        phase += 2.0f * 3.1415926535f * TONE_FREQ / SAMPLE_RATE;
-        if (phase >= 2.0f * 3.1415926535f)
-            phase -= 2.0f * 3.1415926535f;
+        if (sound_on) {
+            sample = sinf(phase) * 0.4f;
+
+            phase += 2.0f * 3.1415926535f * TONE_FREQ / SAMPLE_RATE;
+            if (phase >= 2.0f * 3.1415926535f)
+                phase -= 2.0f * 3.1415926535f;
+        }
 
         out[i] = (int16_t)(sample * 32767);
     }
@@ -38,7 +43,7 @@ int main(int argc, char **argv)
     }
 
     SDL_Window *window = SDL_CreateWindow(
-        "Windows Synth Audio Test",
+        "Windows Synth - SPACE = Toggle Sound",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         400,
@@ -78,6 +83,11 @@ int main(int argc, char **argv)
             if (e.type == SDL_KEYDOWN) {
                 if (e.key.keysym.sym == SDLK_ESCAPE)
                     running = 0;
+
+                if (e.key.keysym.sym == SDLK_SPACE) {
+                    sound_on = !sound_on;
+                    printf("Sound %s\n", sound_on ? "ON" : "OFF");
+                }
             }
         }
         SDL_Delay(16);
