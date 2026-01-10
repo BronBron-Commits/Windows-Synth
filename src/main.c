@@ -7,14 +7,13 @@
 ========================= */
 #define SAMPLE_RATE 44100
 #define MAX_VOICES  16
+#define NUM_NOTES   8
 
 #define WINDOW_W 640
 #define WINDOW_H 240
 
 #define VIB_RATE   5.0f
 #define VIB_DEPTH  0.003f
-
-#define NUM_NOTES 8
 
 /* =========================
    VOICE STRUCT
@@ -35,19 +34,12 @@ typedef struct {
 static Voice voices[MAX_VOICES];
 static int running = 1;
 
-/* vibrato */
 static float vibrato_phase = 0.0f;
 
-/* diatonic C major scale (1–8) */
+/* diatonic C major scale */
 static float note_freqs[NUM_NOTES] = {
-    261.63f, /* C4 */
-    293.66f, /* D4 */
-    329.63f, /* E4 */
-    349.23f, /* F4 */
-    392.00f, /* G4 */
-    440.00f, /* A4 */
-    493.88f, /* B4 */
-    523.25f  /* C5 */
+    261.63f, 293.66f, 329.63f, 349.23f,
+    392.00f, 440.00f, 493.88f, 523.25f
 };
 
 static int note_active[NUM_NOTES] = {0};
@@ -74,7 +66,6 @@ static void note_on(float freq)
     for (int i = 0; i < MAX_VOICES; i++) {
         if (!voices[i].active) {
             Voice *v = &voices[i];
-
             for (int o = 0; o < 6; o++)
                 v->phase[o] = 0.0f;
 
@@ -114,7 +105,6 @@ void audio_cb(void *ud, Uint8 *stream, int len)
     for (int i = 0; i < samples; i++) {
         float mix = 0.0f;
 
-        /* global vibrato */
         vibrato_phase += (2.0f * M_PI * VIB_RATE) / SAMPLE_RATE;
         if (vibrato_phase > 2.0f * M_PI)
             vibrato_phase -= 2.0f * M_PI;
@@ -126,8 +116,6 @@ void audio_cb(void *ud, Uint8 *stream, int len)
             if (!vc->active)
                 continue;
 
-            float s = 0.0f;
-
             float vib_mod =
                 1.0f +
                 vib * VIB_DEPTH +
@@ -135,27 +123,22 @@ void audio_cb(void *ud, Uint8 *stream, int len)
 
             float f = vc->freq * vib_mod;
 
-            /* layered ensemble */
+            float s = 0.0f;
             s += square(vc->phase[0]);
             s += square(vc->phase[1] * 1.002f);
             s += square(vc->phase[2] * 0.998f);
             s += triangle(vc->phase[3]);
             s += triangle(vc->phase[4] * 1.003f);
             s += triangle(vc->phase[5] * 0.997f);
-
             s *= (1.0f / 6.0f);
 
             for (int o = 0; o < 6; o++)
                 vc->phase[o] += f / SAMPLE_RATE;
 
-            /* envelope */
             vc->amp += (vc->target_amp - vc->amp) * 0.0015f;
-
-            /* low-pass smoothing */
             vc->lp += 0.04f * (s - vc->lp);
-            s = vc->lp;
 
-            mix += s * vc->amp;
+            mix += vc->lp * vc->amp;
 
             if (vc->amp < 0.0005f && vc->target_amp == 0.0f)
                 vc->active = 0;
@@ -169,6 +152,37 @@ void audio_cb(void *ud, Uint8 *stream, int len)
 }
 
 /* =========================
+   VISUALS
+========================= */
+static void draw_notes(SDL_Renderer *r)
+{
+    int margin = 40;
+    int box_w = (WINDOW_W - margin * 2) / NUM_NOTES;
+    int box_h = 60;
+    int y = WINDOW_H / 2 - box_h / 2;
+
+    for (int i = 0; i < NUM_NOTES; i++) {
+        SDL_Rect rect = {
+            margin + i * box_w,
+            y,
+            box_w - 6,
+            box_h
+        };
+
+        if (note_active[i]) {
+            SDL_SetRenderDrawColor(r, 60, 160, 220, 255);
+            SDL_RenderFillRect(r, &rect);
+        } else {
+            SDL_SetRenderDrawColor(r, 40, 40, 40, 255);
+            SDL_RenderFillRect(r, &rect);
+        }
+
+        SDL_SetRenderDrawColor(r, 200, 200, 200, 255);
+        SDL_RenderDrawRect(r, &rect);
+    }
+}
+
+/* =========================
    MAIN
 ========================= */
 int main(int argc, char *argv[])
@@ -176,7 +190,7 @@ int main(int argc, char *argv[])
     SDL_Init(SDL_INIT_AUDIO | SDL_INIT_VIDEO);
 
     SDL_Window *win = SDL_CreateWindow(
-        "Polyphonic Ensemble – Diatonic Scale",
+        "Polyphonic Ensemble – Visual Feedback",
         SDL_WINDOWPOS_CENTERED,
         SDL_WINDOWPOS_CENTERED,
         WINDOW_W, WINDOW_H,
@@ -230,6 +244,7 @@ int main(int argc, char *argv[])
 
         SDL_SetRenderDrawColor(ren, 15, 15, 15, 255);
         SDL_RenderClear(ren);
+        draw_notes(ren);
         SDL_RenderPresent(ren);
         SDL_Delay(16);
     }
