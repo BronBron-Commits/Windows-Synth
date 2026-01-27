@@ -1,2 +1,9 @@
-build\
+# Build artifacts
+build/
 *.exe
+*.dll
+*.obj
+
+# MSVC
+*.pdb
+*.ilk
